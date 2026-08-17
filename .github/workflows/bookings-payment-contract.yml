@@ -1,0 +1,87 @@
+name: Bookings Payment Contract
+
+on:
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'src/bookings_contract.rs'
+      - 'src/bin/bookings_payments_api.rs'
+      - 'migrations/002_booking_payment_lifecycle.sql'
+      - 'API_SPEC.yaml'
+      - '.github/workflows/bookings-payment-contract.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'src/bookings_contract.rs'
+      - 'src/bin/bookings_payments_api.rs'
+      - 'migrations/002_booking_payment_lifecycle.sql'
+      - 'API_SPEC.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  rust-contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+      - name: Format gate
+        run: cargo fmt --all -- --check
+      - name: Domain lifecycle tests
+        run: cargo test --lib bookings_contract::tests
+      - name: Compile Bookings payment API
+        run: cargo check --bin bookings_payments_api
+
+  migration:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: payments
+          POSTGRES_PASSWORD: payments
+          POSTGRES_DB: payments
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd 'pg_isready -U payments -d payments'
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGPASSWORD: payments
+    steps:
+      - uses: actions/checkout@v6
+      - name: Apply canonical payment schema
+        run: |
+          psql -h 127.0.0.1 -U payments -d payments -v ON_ERROR_STOP=1 -f migrations/001_initial_schema.sql
+          psql -h 127.0.0.1 -U payments -d payments -v ON_ERROR_STOP=1 -f migrations/002_booking_payment_lifecycle.sql
+      - name: Verify lifecycle invariants
+        run: |
+          psql -h 127.0.0.1 -U payments -d payments -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO booking_payment_holds
+            (id, tenant_id, external_reference, booking_reference, amount, currency, captured_amount, refunded_amount, state, created_at, updated_at)
+          VALUES
+            ('00000000-0000-7000-8000-000000000001','tenant-a','NVH-ci','booking-ci',100,'NGN',0,0,'AUTHORIZED',NOW(),NOW());
+          DO $$
+          BEGIN
+            BEGIN
+              INSERT INTO booking_payment_holds
+                (id, tenant_id, external_reference, booking_reference, amount, currency, captured_amount, refunded_amount, state, created_at, updated_at)
+              VALUES
+                ('00000000-0000-7000-8000-000000000002','tenant-a','NVH-ci-2','booking-ci',100,'NGN',0,0,'AUTHORIZED',NOW(),NOW());
+              RAISE EXCEPTION 'expected tenant/booking uniqueness violation';
+            EXCEPTION WHEN unique_violation THEN NULL;
+            END;
+            BEGIN
+              UPDATE booking_payment_holds SET refunded_amount=1 WHERE external_reference='NVH-ci';
+              RAISE EXCEPTION 'expected refund/capture bound violation';
+            EXCEPTION WHEN check_violation THEN NULL;
+            END;
+          END $$;
+          SQL
