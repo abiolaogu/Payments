@@ -35,3 +35,19 @@ CREATE TABLE IF NOT EXISTS booking_payment_idempotency (
 
 CREATE INDEX IF NOT EXISTS idx_booking_payment_idempotency_created
     ON booking_payment_idempotency (created_at);
+
+CREATE TABLE IF NOT EXISTS booking_payment_event_outbox (
+    id UUID PRIMARY KEY,
+    tenant_id VARCHAR(128) NOT NULL,
+    aggregate_reference VARCHAR(128) NOT NULL,
+    event_type VARCHAR(96) NOT NULL,
+    payload JSONB NOT NULL,
+    correlation_id VARCHAR(128),
+    causation_id VARCHAR(128),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    published_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_booking_payment_event_outbox_unpublished
+    ON booking_payment_event_outbox (created_at)
+    WHERE published_at IS NULL;
