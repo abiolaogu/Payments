@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
-  title: extract-payments Service API
-  version: 1.0.0
-  description: Standardized API contract for the Billyronks ecosystem.
+  title: Nvuto Payments Service API
+  version: 1.1.0
+  description: Canonical payment authority for the Nvuto ecosystem, including the versioned nvuto.payments.booking.v1 lifecycle consumed by Nvuto Bookings.
 servers:
   - url: https://api.example.local
 paths:
@@ -10,60 +10,164 @@ paths:
     get:
       summary: Health check
       responses:
-        '200':
-          description: Service healthy
-  /events/publish:
+        '200': { description: Service healthy }
+  /api/v1/bookings/payment-holds:
     post:
-      summary: Publish event to Pulsar
+      summary: Authorize a payment hold for a booking
+      security: [{ workloadBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/CausationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthorizeBookingPayment' }
+      responses:
+        '201': { description: Hold authorized, content: { application/json: { schema: { $ref: '#/components/schemas/BookingPayment' } } } }
+        '200': { description: Deterministic replay of a completed idempotent operation }
+        '401': { description: Missing, inactive, or expired workload identity }
+        '409': { description: Idempotency conflict or booking already has a hold }
+        '503': { description: Platform identity or Payments persistence unavailable }
+  /api/v1/bookings/payment-holds/{reference}:
+    get:
+      summary: Reconcile a booking payment by stable Payments reference
+      security: [{ workloadBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PaymentReference'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200': { description: Current payment authority state, content: { application/json: { schema: { $ref: '#/components/schemas/BookingPayment' } } } }
+        '404': { description: Reference not found in caller tenant }
+  /api/v1/bookings/payment-holds/{reference}/capture:
+    post:
+      summary: Capture an authorized booking payment hold
+      security: [{ workloadBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PaymentReference'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/CausationId'
+      responses:
+        '200': { description: Captured or deterministic replay }
+        '402': { description: Provider authorization was declined }
+        '409': { description: Invalid lifecycle or idempotency conflict }
+        '410': { description: Authorization expired }
+  /api/v1/bookings/payment-holds/{reference}/release:
+    post:
+      summary: Release or void an uncaptured booking payment hold
+      security: [{ workloadBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PaymentReference'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/CausationId'
+      responses:
+        '200': { description: Released or deterministic replay }
+        '409': { description: Already captured/released or idempotency conflict }
+  /api/v1/bookings/payment-holds/{reference}/refunds:
+    post:
+      summary: Refund a captured booking payment, partially or fully
+      security: [{ workloadBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PaymentReference'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/CausationId'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [amount]
               properties:
-                topic:
-                  type: string
-                  example: persistent://billyronks/extract-payments/event
-                payload:
-                  type: object
+                amount: { type: string, example: '125.00' }
       responses:
-        '202':
-          description: Accepted
+        '200': { description: Partial/full refund or deterministic replay }
+        '409': { description: Refund exceeds captured balance or state conflict }
+  /events/publish:
+    post:
+      summary: Legacy event publisher surface
+      responses:
+        '202': { description: Accepted }
   /observability/logs:
     post:
-      summary: Send structured log payload to Quickwit pipeline
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LogEvent'
+      summary: Legacy structured-log ingestion surface
       responses:
-        '202':
-          description: Accepted
+        '202': { description: Accepted }
 components:
+  securitySchemes:
+    workloadBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: Nvuto Platform Services workload access token
+      description: Token is introspected against Platform Services /api/v1/auth/introspect. Tenant authority comes only from the active token.
+  parameters:
+    PaymentReference:
+      name: reference
+      in: path
+      required: true
+      schema: { type: string, pattern: '^NVH-' }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 200 }
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      schema: { type: string, maxLength: 128 }
+    CausationId:
+      name: X-Causation-ID
+      in: header
+      required: false
+      schema: { type: string, maxLength: 128 }
   schemas:
+    AuthorizeBookingPayment:
+      type: object
+      required: [booking_reference, amount, currency]
+      properties:
+        booking_reference: { type: string }
+        amount: { type: string, example: '250.00' }
+        currency: { type: string, minLength: 3, maxLength: 3, example: NGN }
+      description: Deliberately contains no tenant field; tenant is derived from workload identity.
+    BookingPayment:
+      type: object
+      required: [contract_version, external_reference, booking_reference, amount, currency, captured_amount, refunded_amount, state, replayed]
+      properties:
+        contract_version: { type: string, enum: [nvuto.payments.booking.v1] }
+        external_reference: { type: string }
+        booking_reference: { type: string }
+        amount: { type: string }
+        currency: { type: string }
+        captured_amount: { type: string }
+        refunded_amount: { type: string }
+        state:
+          type: string
+          enum: [AUTHORIZED, CAPTURED, RELEASED, PARTIALLY_REFUNDED, REFUNDED, DECLINED, EXPIRED]
+        replayed: { type: boolean }
+    BookingPaymentEvent:
+      type: object
+      description: Durable outbox/webhook event envelope for asynchronous lifecycle changes.
+      required: [contract_version, external_reference, booking_reference, state, occurred_at]
+      properties:
+        contract_version: { type: string, enum: [nvuto.payments.booking.v1] }
+        external_reference: { type: string }
+        booking_reference: { type: string }
+        state: { type: string }
+        occurred_at: { type: string, format: date-time }
     LogEvent:
       type: object
       required: [timestamp, level, service, trace_id, message]
       properties:
-        timestamp:
-          type: string
-          format: date-time
-        level:
-          type: string
-          enum: [DEBUG, INFO, WARN, ERROR, FATAL]
-        service:
-          type: string
-        trace_id:
-          type: string
-        span_id:
-          type: string
-        tenant_id:
-          type: string
-        message:
-          type: string
-        attrs:
-          type: object
-          additionalProperties: true
+        timestamp: { type: string, format: date-time }
+        level: { type: string, enum: [DEBUG, INFO, WARN, ERROR, FATAL] }
+        service: { type: string }
+        trace_id: { type: string }
+        span_id: { type: string }
+        tenant_id: { type: string }
+        message: { type: string }
+        attrs: { type: object, additionalProperties: true }
