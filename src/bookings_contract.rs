@@ -14,6 +14,8 @@ pub enum HoldState {
     Released,
     PartiallyRefunded,
     Refunded,
+    Declined,
+    Expired,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -57,6 +59,10 @@ pub enum LifecycleError {
     AlreadyReleased,
     #[error("payment hold has already been fully refunded")]
     AlreadyRefunded,
+    #[error("payment authorization was declined")]
+    Declined,
+    #[error("payment authorization has expired")]
+    Expired,
     #[error("refund exceeds captured balance")]
     RefundExceedsCaptured,
     #[error("operation is not valid in the current payment state")]
@@ -115,6 +121,8 @@ impl BookingPaymentHold {
             }
             HoldState::Captured | HoldState::PartiallyRefunded | HoldState::Refunded => Err(LifecycleError::AlreadyCaptured),
             HoldState::Released => Err(LifecycleError::AlreadyReleased),
+            HoldState::Declined => Err(LifecycleError::Declined),
+            HoldState::Expired => Err(LifecycleError::Expired),
         }
     }
 
@@ -127,6 +135,8 @@ impl BookingPaymentHold {
             }
             HoldState::Released => Err(LifecycleError::AlreadyReleased),
             HoldState::Captured | HoldState::PartiallyRefunded | HoldState::Refunded => Err(LifecycleError::AlreadyCaptured),
+            HoldState::Declined => Err(LifecycleError::Declined),
+            HoldState::Expired => Err(LifecycleError::Expired),
         }
     }
 
@@ -135,6 +145,8 @@ impl BookingPaymentHold {
         match self.state {
             HoldState::Refunded => return Err(LifecycleError::AlreadyRefunded),
             HoldState::Captured | HoldState::PartiallyRefunded => {}
+            HoldState::Declined => return Err(LifecycleError::Declined),
+            HoldState::Expired => return Err(LifecycleError::Expired),
             HoldState::Authorized | HoldState::Released => return Err(LifecycleError::InvalidState),
         }
         let refundable = self.captured_amount - self.refunded_amount;
@@ -194,6 +206,16 @@ mod tests {
         let mut hold = BookingPaymentHold::authorize("tenant-a", "booking-1", Decimal::new(1000, 2), "USD", now()).unwrap();
         hold.capture(now()).unwrap();
         assert_eq!(hold.refund(Decimal::new(1001, 2), now()), Err(LifecycleError::RefundExceedsCaptured));
+    }
+
+    #[test]
+    fn declined_and_expired_are_terminal_for_capture() {
+        let mut declined = BookingPaymentHold::authorize("tenant-a", "booking-1", Decimal::new(1000, 2), "USD", now()).unwrap();
+        declined.state = HoldState::Declined;
+        assert_eq!(declined.capture(now()), Err(LifecycleError::Declined));
+        let mut expired = BookingPaymentHold::authorize("tenant-a", "booking-2", Decimal::new(1000, 2), "USD", now()).unwrap();
+        expired.state = HoldState::Expired;
+        assert_eq!(expired.capture(now()), Err(LifecycleError::Expired));
     }
 
     #[test]
