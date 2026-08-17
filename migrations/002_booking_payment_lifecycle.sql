@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS booking_payment_holds (
     currency VARCHAR(3) NOT NULL CHECK (char_length(currency) = 3),
     captured_amount DECIMAL(20,4) NOT NULL DEFAULT 0 CHECK (captured_amount >= 0),
     refunded_amount DECIMAL(20,4) NOT NULL DEFAULT 0 CHECK (refunded_amount >= 0),
-    state VARCHAR(32) NOT NULL CHECK (state IN ('AUTHORIZED','CAPTURED','RELEASED','PARTIALLY_REFUNDED','REFUNDED')),
+    state VARCHAR(32) NOT NULL CHECK (state IN ('AUTHORIZED','CAPTURED','RELEASED','PARTIALLY_REFUNDED','REFUNDED','DECLINED','EXPIRED')),
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT booking_payment_hold_capture_bound CHECK (captured_amount <= amount),
