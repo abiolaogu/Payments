@@ -8,10 +8,10 @@ RUN cargo build --release
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=builder /app/target/release/opensase-payments /app/opensase-payments
+COPY --from=builder /app/target/release/sase-payments /app/sase-payments
 COPY --from=builder /app/migrations /app/migrations
 RUN useradd -r -s /bin/false appuser
 USER appuser
 ENV RUST_LOG=info PORT=8084
 EXPOSE 8084
-ENTRYPOINT ["/app/opensase-payments"]
+ENTRYPOINT ["/app/sase-payments"]

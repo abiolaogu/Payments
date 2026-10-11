@@ -1,4 +1,4 @@
-import type { DataProvider } from "@refinedev/core";
+import type { BaseRecord, DataProvider } from "@refinedev/core";
 
 const inMemory = {
   users: [{ id: "1", name: "Ada", email: "ada@example.com" }],
@@ -13,9 +13,9 @@ export const dataProvider: DataProvider = {
     (inMemory as any)[resource] = [...((inMemory as any)[resource] ?? []), item];
     return { data: item as any };
   },
-  update: async ({ resource, id, variables }) => ({ data: { id, ...(variables as object) } as any }),
+  update: async ({ id, variables }) => ({ data: { id, ...(variables as object) } as any }),
   getOne: async ({ resource, id }) => ({ data: (((inMemory as any)[resource] ?? []).find((i: any) => i.id === id) ?? { id }) as any }),
   deleteOne: async ({ id }) => ({ data: { id } as any }),
   getApiUrl: () => "",
-  custom: async () => ({ data: {} }),
+  custom: async <TData extends BaseRecord = BaseRecord>() => ({ data: {} as TData }),
 };

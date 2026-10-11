@@ -3,6 +3,8 @@
 ## Scope
 Repository `extract-payments` mapped to controls for SOC2, HIPAA, and PCI-DSS where applicable.
 
+This mapping identifies intended control ownership; it is not certification or evidence that a control operates in production. Current privacy, consumer-protection, payment-security, and release dependencies are recorded in `docs/compliance/REPOSITORY_AUDIT_2026-10-11.md`.
+
 ## Control Mapping
 | Control Family | Implementation in Repo |
 |---|---|
@@ -12,6 +14,8 @@ Repository `extract-payments` mapped to controls for SOC2, HIPAA, and PCI-DSS wh
 | HIPAA 164.312(c) | Integrity checks through event immutability and signed payload patterns |
 | PCI-DSS 10 | Centralized security event logging with searchable trace correlation |
 | PCI-DSS 7/8 | Role-based topic access and service identity enforcement |
+
+The listed implementations require deployed-configuration, access-review, retention, incident-response, and operating-effectiveness evidence in Nvuto GRC. HIPAA applicability requires a documented data-flow and regulated-entity determination; repository keywords alone are not conclusive.
 
 ## Evidence Artifacts
 - `PLAN.md`

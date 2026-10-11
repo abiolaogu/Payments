@@ -89,9 +89,15 @@ impl BookingPaymentHold {
         let tenant_id = tenant_id.into().trim().to_string();
         let booking_reference = booking_reference.into().trim().to_string();
         let currency = currency.into().trim().to_ascii_uppercase();
-        if tenant_id.is_empty() { return Err(LifecycleError::MissingTenant); }
-        if booking_reference.is_empty() { return Err(LifecycleError::MissingBookingReference); }
-        if amount <= Decimal::ZERO { return Err(LifecycleError::InvalidAmount); }
+        if tenant_id.is_empty() {
+            return Err(LifecycleError::MissingTenant);
+        }
+        if booking_reference.is_empty() {
+            return Err(LifecycleError::MissingBookingReference);
+        }
+        if amount <= Decimal::ZERO {
+            return Err(LifecycleError::InvalidAmount);
+        }
         if currency.len() != 3 || !currency.chars().all(|c| c.is_ascii_alphabetic()) {
             return Err(LifecycleError::InvalidCurrency);
         }
@@ -119,7 +125,9 @@ impl BookingPaymentHold {
                 self.updated_at = now;
                 Ok(self.receipt(self.amount, false))
             }
-            HoldState::Captured | HoldState::PartiallyRefunded | HoldState::Refunded => Err(LifecycleError::AlreadyCaptured),
+            HoldState::Captured | HoldState::PartiallyRefunded | HoldState::Refunded => {
+                Err(LifecycleError::AlreadyCaptured)
+            }
             HoldState::Released => Err(LifecycleError::AlreadyReleased),
             HoldState::Declined => Err(LifecycleError::Declined),
             HoldState::Expired => Err(LifecycleError::Expired),
@@ -134,40 +142,70 @@ impl BookingPaymentHold {
                 Ok(self.receipt(self.amount, false))
             }
             HoldState::Released => Err(LifecycleError::AlreadyReleased),
-            HoldState::Captured | HoldState::PartiallyRefunded | HoldState::Refunded => Err(LifecycleError::AlreadyCaptured),
+            HoldState::Captured | HoldState::PartiallyRefunded | HoldState::Refunded => {
+                Err(LifecycleError::AlreadyCaptured)
+            }
             HoldState::Declined => Err(LifecycleError::Declined),
             HoldState::Expired => Err(LifecycleError::Expired),
         }
     }
 
-    pub fn refund(&mut self, amount: Decimal, now: DateTime<Utc>) -> Result<MutationReceipt, LifecycleError> {
-        if amount <= Decimal::ZERO { return Err(LifecycleError::InvalidAmount); }
+    pub fn refund(
+        &mut self,
+        amount: Decimal,
+        now: DateTime<Utc>,
+    ) -> Result<MutationReceipt, LifecycleError> {
+        if amount <= Decimal::ZERO {
+            return Err(LifecycleError::InvalidAmount);
+        }
         match self.state {
             HoldState::Refunded => return Err(LifecycleError::AlreadyRefunded),
             HoldState::Captured | HoldState::PartiallyRefunded => {}
             HoldState::Declined => return Err(LifecycleError::Declined),
             HoldState::Expired => return Err(LifecycleError::Expired),
-            HoldState::Authorized | HoldState::Released => return Err(LifecycleError::InvalidState),
+            HoldState::Authorized | HoldState::Released => {
+                return Err(LifecycleError::InvalidState)
+            }
         }
         let refundable = self.captured_amount - self.refunded_amount;
-        if amount > refundable { return Err(LifecycleError::RefundExceedsCaptured); }
+        if amount > refundable {
+            return Err(LifecycleError::RefundExceedsCaptured);
+        }
         self.refunded_amount += amount;
-        self.state = if self.refunded_amount == self.captured_amount { HoldState::Refunded } else { HoldState::PartiallyRefunded };
+        self.state = if self.refunded_amount == self.captured_amount {
+            HoldState::Refunded
+        } else {
+            HoldState::PartiallyRefunded
+        };
         self.updated_at = now;
         Ok(self.receipt(amount, false))
     }
 
     pub fn receipt(&self, amount: Decimal, replayed: bool) -> MutationReceipt {
-        MutationReceipt { external_reference: self.external_reference.clone(), state: self.state, amount, replayed }
+        MutationReceipt {
+            external_reference: self.external_reference.clone(),
+            state: self.state,
+            amount,
+            replayed,
+        }
     }
 }
 
-pub fn validate_idempotency(key: &str, operation: &str, fingerprint: &str, prior: Option<&IdempotencyRecord>) -> Result<bool, LifecycleError> {
+pub fn validate_idempotency(
+    key: &str,
+    operation: &str,
+    fingerprint: &str,
+    prior: Option<&IdempotencyRecord>,
+) -> Result<bool, LifecycleError> {
     let key = key.trim();
-    if key.is_empty() { return Err(LifecycleError::MissingIdempotencyKey); }
+    if key.is_empty() {
+        return Err(LifecycleError::MissingIdempotencyKey);
+    }
     if let Some(prior) = prior {
         if prior.key == key {
-            if prior.operation == operation && prior.fingerprint == fingerprint { return Ok(true); }
+            if prior.operation == operation && prior.fingerprint == fingerprint {
+                return Ok(true);
+            }
             return Err(LifecycleError::IdempotencyConflict);
         }
     }
@@ -179,11 +217,20 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
-    fn now() -> DateTime<Utc> { Utc.with_ymd_and_hms(2026, 8, 16, 22, 0, 0).unwrap() }
+    fn now() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 8, 16, 22, 0, 0).unwrap()
+    }
 
     #[test]
     fn lifecycle_authorize_capture_refund_is_bounded() {
-        let mut hold = BookingPaymentHold::authorize("tenant-a", "booking-1", Decimal::new(25000, 2), "ngn", now()).unwrap();
+        let mut hold = BookingPaymentHold::authorize(
+            "tenant-a",
+            "booking-1",
+            Decimal::new(25000, 2),
+            "ngn",
+            now(),
+        )
+        .unwrap();
         assert_eq!(hold.state, HoldState::Authorized);
         hold.capture(now()).unwrap();
         assert_eq!(hold.state, HoldState::Captured);
@@ -196,33 +243,77 @@ mod tests {
 
     #[test]
     fn released_hold_cannot_be_captured() {
-        let mut hold = BookingPaymentHold::authorize("tenant-a", "booking-1", Decimal::new(1000, 2), "USD", now()).unwrap();
+        let mut hold = BookingPaymentHold::authorize(
+            "tenant-a",
+            "booking-1",
+            Decimal::new(1000, 2),
+            "USD",
+            now(),
+        )
+        .unwrap();
         hold.release(now()).unwrap();
         assert_eq!(hold.capture(now()), Err(LifecycleError::AlreadyReleased));
     }
 
     #[test]
     fn refund_cannot_exceed_capture() {
-        let mut hold = BookingPaymentHold::authorize("tenant-a", "booking-1", Decimal::new(1000, 2), "USD", now()).unwrap();
+        let mut hold = BookingPaymentHold::authorize(
+            "tenant-a",
+            "booking-1",
+            Decimal::new(1000, 2),
+            "USD",
+            now(),
+        )
+        .unwrap();
         hold.capture(now()).unwrap();
-        assert_eq!(hold.refund(Decimal::new(1001, 2), now()), Err(LifecycleError::RefundExceedsCaptured));
+        assert_eq!(
+            hold.refund(Decimal::new(1001, 2), now()),
+            Err(LifecycleError::RefundExceedsCaptured)
+        );
     }
 
     #[test]
     fn declined_and_expired_are_terminal_for_capture() {
-        let mut declined = BookingPaymentHold::authorize("tenant-a", "booking-1", Decimal::new(1000, 2), "USD", now()).unwrap();
+        let mut declined = BookingPaymentHold::authorize(
+            "tenant-a",
+            "booking-1",
+            Decimal::new(1000, 2),
+            "USD",
+            now(),
+        )
+        .unwrap();
         declined.state = HoldState::Declined;
         assert_eq!(declined.capture(now()), Err(LifecycleError::Declined));
-        let mut expired = BookingPaymentHold::authorize("tenant-a", "booking-2", Decimal::new(1000, 2), "USD", now()).unwrap();
+        let mut expired = BookingPaymentHold::authorize(
+            "tenant-a",
+            "booking-2",
+            Decimal::new(1000, 2),
+            "USD",
+            now(),
+        )
+        .unwrap();
         expired.state = HoldState::Expired;
         assert_eq!(expired.capture(now()), Err(LifecycleError::Expired));
     }
 
     #[test]
     fn idempotency_replay_requires_same_operation_and_fingerprint() {
-        let prior = IdempotencyRecord { key: "idem-1".into(), operation: "capture".into(), fingerprint: "hold-1".into() };
-        assert_eq!(validate_idempotency("idem-1", "capture", "hold-1", Some(&prior)), Ok(true));
-        assert_eq!(validate_idempotency("idem-1", "release", "hold-1", Some(&prior)), Err(LifecycleError::IdempotencyConflict));
-        assert_eq!(validate_idempotency("idem-1", "capture", "hold-2", Some(&prior)), Err(LifecycleError::IdempotencyConflict));
+        let prior = IdempotencyRecord {
+            key: "idem-1".into(),
+            operation: "capture".into(),
+            fingerprint: "hold-1".into(),
+        };
+        assert_eq!(
+            validate_idempotency("idem-1", "capture", "hold-1", Some(&prior)),
+            Ok(true)
+        );
+        assert_eq!(
+            validate_idempotency("idem-1", "release", "hold-1", Some(&prior)),
+            Err(LifecycleError::IdempotencyConflict)
+        );
+        assert_eq!(
+            validate_idempotency("idem-1", "capture", "hold-2", Some(&prior)),
+            Err(LifecycleError::IdempotencyConflict)
+        );
     }
 }
