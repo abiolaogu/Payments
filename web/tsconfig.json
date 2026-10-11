@@ -9,5 +9,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src", "codegen.ts", "vite.config.ts"]
+  "include": ["src", "codegen.ts", "vite.config.ts", "vitest.config.ts"]
 }

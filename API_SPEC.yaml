@@ -2,7 +2,11 @@ openapi: 3.0.3
 info:
   title: Nvuto Payments Service API
   version: 1.1.0
-  description: Canonical payment authority for the Nvuto ecosystem, including the versioned nvuto.payments.booking.v1 lifecycle consumed by Nvuto Bookings.
+  description: >-
+    Canonical payment authority for the Nvuto ecosystem, including the versioned
+    nvuto.payments.booking.v1 lifecycle consumed by Nvuto Bookings. The default
+    binary also contains a transitional legacy administration surface which is
+    not a consumer API and requires the payments:legacy-admin workload permission.
 servers:
   - url: https://api.example.local
 paths:
@@ -87,6 +91,30 @@ paths:
       responses:
         '200': { description: Partial/full refund or deterministic replay }
         '409': { description: Refund exceeds captured balance or state conflict }
+  /api/v1/payments/webhook:
+    post:
+      summary: Receive a signed Paystack or Flutterwave provider event
+      description: >-
+        Signature verification is performed over the exact raw request body.
+        The payload is not written to application logs.
+      security: []
+      parameters:
+        - name: x-paystack-signature
+          in: header
+          required: false
+          schema: { type: string }
+        - name: verif-hash
+          in: header
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Signature verified and event accepted }
+        '401': { description: Missing or invalid provider signature }
   /events/publish:
     post:
       summary: Legacy event publisher surface

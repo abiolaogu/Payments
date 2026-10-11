@@ -1,18 +1,31 @@
 import type { AuthBindings } from "@refinedev/core";
 
-const TOKEN_KEY = "frontend_auth_token";
+let accessToken: string | null = null;
+
+export function getAccessToken(): string | null {
+  return accessToken;
+}
 
 export const authProvider: AuthBindings = {
   login: async ({ token }) => {
-    localStorage.setItem(TOKEN_KEY, token || "demo-token");
+    if (typeof token !== "string" || token.trim().length === 0) {
+      return {
+        success: false,
+        error: {
+          name: "AuthenticationError",
+          message: "A verified StratoID/Authentik access token is required",
+        },
+      };
+    }
+    accessToken = token.trim();
     return { success: true, redirectTo: "/" };
   },
   logout: async () => {
-    localStorage.removeItem(TOKEN_KEY);
+    accessToken = null;
     return { success: true, redirectTo: "/login" };
   },
   check: async () => {
-    if (localStorage.getItem(TOKEN_KEY)) {
+    if (accessToken) {
       return { authenticated: true };
     }
     return { authenticated: false, redirectTo: "/login" };

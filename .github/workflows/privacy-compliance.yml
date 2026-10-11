@@ -1,0 +1,130 @@
+name: Privacy and consumer protection
+
+on:
+  schedule:
+    - cron: "20 4 * * *"
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evidence:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test fail-closed security controls
+        run: cargo test --locked --lib security::tests
+      - name: Scan confirmed blockers and review indicators
+        run: |
+          mkdir -p compliance-evidence
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import re
+          import sys
+
+          findings = []
+          rules = [
+              (
+                  "IDENTITY-DEMO-TOKEN",
+                  "critical",
+                  True,
+                  re.compile(r"token\s*\|\|\s*['\"]demo-token['\"]"),
+                  "A missing principal is replaced with a fabricated token.",
+              ),
+              (
+                  "PRIVACY-PERMISSIVE-CORS",
+                  "critical",
+                  True,
+                  re.compile(r"CorsLayer::permissive\s*\("),
+                  "The payment API permits browser requests from every origin.",
+              ),
+              (
+                  "PRIVACY-RAW-WEBHOOK-LOG",
+                  "critical",
+                  True,
+                  re.compile(r"tracing::(?:info|debug|warn|error)!?\([^\n]*payload"),
+                  "A provider webhook payload may contain customer or payment data and is logged raw.",
+              ),
+          ]
+          extensions = {".rs", ".js", ".jsx", ".ts", ".tsx"}
+          for path in pathlib.Path(".").rglob("*"):
+              if not path.is_file() or path.suffix not in extensions:
+                  continue
+              if any(part in {".git", "node_modules", "target", "dist", "build"} for part in path.parts):
+                  continue
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              for line_number, line in enumerate(text.splitlines(), 1):
+                  for rule_id, severity, blocking, pattern, message in rules:
+                      if pattern.search(line):
+                          findings.append({
+                              "rule_id": rule_id,
+                              "severity": severity,
+                              "confidence": "confirmed",
+                              "blocking": blocking,
+                              "path": path.as_posix(),
+                              "line": line_number,
+                              "message": message,
+                          })
+
+          main = pathlib.Path("src/main.rs").read_text(encoding="utf-8")
+          webhook = main.partition("async fn webhook_handler")[2].partition("async fn list_transactions")[0]
+          if webhook and "verify_provider_webhook" not in webhook:
+              findings.append({
+                  "rule_id": "PAYMENT-UNVERIFIED-WEBHOOK",
+                  "severity": "critical",
+                  "confidence": "confirmed",
+                  "blocking": True,
+                  "path": "src/main.rs",
+                  "line": main[:main.index("async fn webhook_handler")].count("\n") + 1,
+                  "message": "The payment-provider webhook does not verify a provider signature over the raw body.",
+              })
+
+          subscription_path = pathlib.Path("src/domain/aggregates/subscription.rs")
+          subscription = subscription_path.read_text(encoding="utf-8")
+          if "pub fn create" in subscription and not re.search(
+              r"consent(?:_|)(?:receipt|evidence)|terms_version|disclosure_version",
+              subscription,
+              re.IGNORECASE,
+          ):
+              findings.append({
+                  "rule_id": "CONSUMER-SUBSCRIPTION-CONSENT",
+                  "severity": "high",
+                  "confidence": "review",
+                  "blocking": False,
+                  "path": subscription_path.as_posix(),
+                  "line": subscription[:subscription.index("pub fn create")].count("\n") + 1,
+                  "message": "The dormant subscription aggregate has no visible affirmative-consent receipt or disclosure version; confirm it remains unexposed.",
+              })
+
+          result = {
+              "schema_version": "1.0",
+              "legal_certification": False,
+              "repository": "abiolaogu/Payments",
+              "findings": findings,
+          }
+          pathlib.Path("compliance-evidence/findings.json").write_text(
+              json.dumps(result, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          for finding in findings:
+              marker = "error" if finding["blocking"] else "warning"
+              print(
+                  f"::{marker} file={finding['path']},line={finding['line']}::"
+                  f"{finding['rule_id']}: {finding['message']}"
+              )
+          if any(finding["blocking"] for finding in findings):
+              sys.exit(1)
+          PY
+      - name: Upload Nvuto GRC evidence input
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: privacy-compliance-evidence
+          path: compliance-evidence/findings.json
+          if-no-files-found: error
